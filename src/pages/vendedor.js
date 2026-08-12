@@ -9,7 +9,7 @@ const MENSAGEM_ERRO_BLING =
   "Não foi possível carregar os dados agora. Você pode digitar manualmente.";
 const MENSAGEM_ERRO_UPLOAD = "Não foi possível enviar a foto. Tente novamente.";
 const MENSAGEM_ERRO_SALVAR = "Não foi possível registrar a venda. Tente novamente.";
-const UNIDADES_RETIRADA = ["Zona Sul", "Zona Leste", "Rio Claro", "Recife", "Porto Alegre"];
+const UNIDADES_RETIRADA = ["Zona Sul", "Zona Leste"];
 
 async function uploadFoto(arquivo, tipo) {
   const formData = new FormData();
