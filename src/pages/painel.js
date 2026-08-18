@@ -21,7 +21,8 @@ const MENSAGEM_ERRO_LEITURA =
   "Não foi possível carregar os registros. Verifique sua permissão de acesso.";
 const MENSAGEM_ERRO_CONFIRMAR = "Não foi possível confirmar a baixa. Tente novamente.";
 
-let unsubscribeSnapshot = null;
+let unsubscribeBaixasAntigas = null;
+let unsubscribeVendas = null;
 
 function formatarData(timestamp) {
   if (!timestamp) return "—";
@@ -34,13 +35,65 @@ function formatarData(timestamp) {
   });
 }
 
+function criadoEmEmMilissegundos(criadoEm) {
+  if (!criadoEm) return 0;
+  if (typeof criadoEm.toMillis === "function") return criadoEm.toMillis();
+  const d = new Date(criadoEm);
+  return Number.isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+// Formato antigo: 1 documento por baixa/produto em "baixas_estoque".
+// Normaliza pro mesmo shape do formato novo (documento de venda com array).
+function normalizarBaixaAntiga(id, dados) {
+  return {
+    id,
+    origem: "baixas_estoque",
+    unidade: dados.unidadeRetirada,
+    criadoEm: dados.criadoEm,
+    produtos: [
+      {
+        nome: dados.produto,
+        codigoProduto: dados.codigoProduto || null,
+        loteId: dados.lote || null,
+        loteDivergente: !!dados.loteDivergente,
+        fotoLote: dados.loteDivergente ? dados.loteFotoUrl || null : null,
+      },
+    ],
+    fotoCupomFiscal: dados.fotoUrl || null,
+    vendedorNome: dados.vendedorNome,
+    vendedorEmail: dados.vendedorEmail,
+    status: dados.status,
+  };
+}
+
+// Formato novo: 1 documento por venda, com array de produtos, em "vendas_estoque".
+function normalizarVenda(id, dados) {
+  return {
+    id,
+    origem: "vendas_estoque",
+    unidade: dados.unidade,
+    criadoEm: dados.criadoEm,
+    produtos: (dados.produtos || []).map((p) => ({
+      nome: p.nome,
+      codigoProduto: p.codigoProduto || null,
+      loteId: p.loteId || null,
+      loteDivergente: !!p.loteDivergente,
+      fotoLote: p.loteDivergente ? p.fotoLote || null : null,
+    })),
+    fotoCupomFiscal: dados.fotoCupomFiscal || null,
+    vendedorNome: dados.vendedorNome,
+    vendedorEmail: dados.vendedorEmail,
+    status: dados.status,
+  };
+}
+
 function renderVendaCard(venda) {
   const produtos = venda.produtos || [];
   const totalItens = produtos.length;
   const algumDivergente = produtos.some((p) => p.loteDivergente);
 
   return `
-    <div class="registro" data-id="${venda.id}">
+    <div class="registro" data-id="${venda.id}" data-origem="${venda.origem}">
       <div class="registro__linha">
         <span class="registro__label">Unidade</span>
         <span class="registro__valor">${venda.unidade}</span>
@@ -202,7 +255,9 @@ function renderPainelAutorizado(root, user) {
   `;
 
   const painelErro = root.querySelector("#painel-erro");
-  let vendasAtuais = [];
+  let baixasAntigasAtuais = [];
+  let vendasNovasAtuais = [];
+  let registrosAtuais = [];
 
   function mostrarErroPainel(texto) {
     if (!texto) {
@@ -214,16 +269,37 @@ function renderPainelAutorizado(root, user) {
     painelErro.textContent = texto;
   }
 
-  const q = query(collection(db, "vendas_estoque"), orderBy("criadoEm", "desc"));
-  unsubscribeSnapshot = onSnapshot(
-    q,
+  function mesclarERenderizar() {
+    registrosAtuais = [...baixasAntigasAtuais, ...vendasNovasAtuais].sort(
+      (a, b) => criadoEmEmMilissegundos(b.criadoEm) - criadoEmEmMilissegundos(a.criadoEm)
+    );
+    renderLista(root, registrosAtuais);
+  }
+
+  const qBaixasAntigas = query(collection(db, "baixas_estoque"), orderBy("criadoEm", "desc"));
+  unsubscribeBaixasAntigas = onSnapshot(
+    qBaixasAntigas,
     (snapshot) => {
-      vendasAtuais = snapshot.docs.map((d) => ({
-        id: d.id,
-        ...d.data({ serverTimestamps: "estimate" }),
-      }));
+      baixasAntigasAtuais = snapshot.docs.map((d) =>
+        normalizarBaixaAntiga(d.id, d.data({ serverTimestamps: "estimate" }))
+      );
       mostrarErroPainel(null);
-      renderLista(root, vendasAtuais);
+      mesclarERenderizar();
+    },
+    () => {
+      mostrarErroPainel(MENSAGEM_ERRO_LEITURA);
+    }
+  );
+
+  const qVendas = query(collection(db, "vendas_estoque"), orderBy("criadoEm", "desc"));
+  unsubscribeVendas = onSnapshot(
+    qVendas,
+    (snapshot) => {
+      vendasNovasAtuais = snapshot.docs.map((d) =>
+        normalizarVenda(d.id, d.data({ serverTimestamps: "estimate" }))
+      );
+      mostrarErroPainel(null);
+      mesclarERenderizar();
     },
     () => {
       mostrarErroPainel(MENSAGEM_ERRO_LEITURA);
@@ -252,8 +328,10 @@ function renderPainelAutorizado(root, user) {
   root.querySelector("#lista").addEventListener("click", async (e) => {
     const idConfirmar = e.target.dataset.confirmar;
     if (idConfirmar) {
+      const registro = registrosAtuais.find((r) => r.id === idConfirmar);
+      if (!registro) return;
       try {
-        await updateDoc(doc(db, "vendas_estoque", idConfirmar), {
+        await updateDoc(doc(db, registro.origem, idConfirmar), {
           status: "confirmado",
           confirmadoPor: user.email,
           confirmadoEm: serverTimestamp(),
@@ -268,7 +346,7 @@ function renderPainelAutorizado(root, user) {
     const idFoto = e.target.dataset.verFoto;
     if (idFoto) {
       const tipo = e.target.dataset.tipoFoto;
-      const venda = vendasAtuais.find((v) => v.id === idFoto);
+      const venda = registrosAtuais.find((r) => r.id === idFoto);
       if (!venda) return;
 
       if (tipo === "cupom") {
@@ -287,9 +365,13 @@ function renderPainelAutorizado(root, user) {
 
 export function renderPainel(root) {
   observarAuth((user) => {
-    if (unsubscribeSnapshot) {
-      unsubscribeSnapshot();
-      unsubscribeSnapshot = null;
+    if (unsubscribeBaixasAntigas) {
+      unsubscribeBaixasAntigas();
+      unsubscribeBaixasAntigas = null;
+    }
+    if (unsubscribeVendas) {
+      unsubscribeVendas();
+      unsubscribeVendas = null;
     }
 
     if (!user) {
