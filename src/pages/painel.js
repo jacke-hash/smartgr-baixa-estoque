@@ -34,78 +34,92 @@ function formatarData(timestamp) {
   });
 }
 
-function renderLista(root, registros) {
+function renderVendaCard(venda) {
+  const produtos = venda.produtos || [];
+  const totalItens = produtos.length;
+  const algumDivergente = produtos.some((p) => p.loteDivergente);
+
+  return `
+    <div class="registro" data-id="${venda.id}">
+      <div class="registro__linha">
+        <span class="registro__label">Unidade</span>
+        <span class="registro__valor">${venda.unidade}</span>
+      </div>
+      <div class="registro__linha">
+        <span class="registro__label">Itens</span>
+        <span class="badge">${totalItens} ${totalItens === 1 ? "item" : "itens"}</span>
+      </div>
+      <div class="registro__produtos">
+        ${produtos
+          .map(
+            (p) => `
+              <div class="registro__produto-linha">
+                <span class="registro__produto-nome">
+                  ${p.nome}${p.codigoProduto ? ` <span class="registro__valor--discreto">(${p.codigoProduto})</span>` : ""}
+                </span>
+                <span class="registro__produto-lote">
+                  ${
+                    p.loteDivergente
+                      ? `<span class="tag-alerta" title="Lote divergente do Bling">⚠ ${p.loteId || "manual"}</span>`
+                      : p.loteId || "—"
+                  }
+                </span>
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+      <div class="registro__linha">
+        <span class="registro__label">Vendedor</span>
+        <span class="registro__valor">${venda.vendedorNome}</span>
+      </div>
+      <div class="registro__linha">
+        <span class="registro__label">Data</span>
+        <span class="registro__valor">${formatarData(venda.criadoEm)}</span>
+      </div>
+      <div class="registro__linha">
+        <span class="registro__label">Status</span>
+        <span class="registro__status-row">
+          ${algumDivergente ? `<span class="tag-alerta">⚠ Lote divergente do Bling</span>` : ""}
+          <span class="status status--${venda.status}">${venda.status}</span>
+        </span>
+      </div>
+      <div class="registro__fotos">
+        ${
+          venda.fotoCupomFiscal
+            ? `<button type="button" class="btn-link" data-ver-foto="${venda.id}" data-tipo-foto="cupom">Ver cupom fiscal</button>`
+            : ""
+        }
+        ${produtos
+          .map((p, i) =>
+            p.loteDivergente && p.fotoLote
+              ? `<button type="button" class="btn-link" data-ver-foto="${venda.id}" data-tipo-foto="lote" data-indice-produto="${i}">Ver foto do lote${totalItens > 1 ? ` (${p.nome})` : ""}</button>`
+              : ""
+          )
+          .join("")}
+      </div>
+      ${
+        venda.status === "pendente"
+          ? `<div class="registro__acoes"><button class="btn" data-confirmar="${venda.id}">Confirmar baixa</button></div>`
+          : ""
+      }
+    </div>
+  `;
+}
+
+function renderLista(root, vendas) {
   const lista = root.querySelector("#lista");
   const contador = root.querySelector("#contador");
 
-  const pendentes = registros.filter((r) => r.status === "pendente").length;
+  const pendentes = vendas.filter((v) => v.status === "pendente").length;
   contador.textContent = `${pendentes} pendente${pendentes === 1 ? "" : "s"}`;
 
-  if (registros.length === 0) {
-    lista.innerHTML = `<div class="empty-state">Nenhum registro de venda ainda.</div>`;
+  if (vendas.length === 0) {
+    lista.innerHTML = `<div class="empty-state">Nenhuma venda registrada ainda.</div>`;
     return;
   }
 
-  lista.innerHTML = registros
-    .map(
-      (r) => `
-      <div class="registro" data-id="${r.id}">
-        <div class="registro__linha">
-          <span class="registro__label">Produto</span>
-          <span class="registro__valor">${r.produto}</span>
-        </div>
-        <div class="registro__linha">
-          <span class="registro__label">SKU</span>
-          <span class="registro__valor${r.codigoProduto ? "" : " registro__valor--discreto"}">${r.codigoProduto || "SKU não identificado"}</span>
-        </div>
-        <div class="registro__linha">
-          <span class="registro__label">Unidade</span>
-          <span class="registro__valor">${r.unidadeRetirada}</span>
-        </div>
-        <div class="registro__linha">
-          <span class="registro__label">Lote</span>
-          <span class="registro__valor">${r.lote}</span>
-        </div>
-        <div class="registro__linha">
-          <span class="registro__label">Vendedor</span>
-          <span class="registro__valor">${r.vendedorNome}</span>
-        </div>
-        <div class="registro__linha">
-          <span class="registro__label">Data</span>
-          <span class="registro__valor">${formatarData(r.criadoEm)}</span>
-        </div>
-        <div class="registro__linha">
-          <span class="registro__label">Status</span>
-          <span class="registro__status-row">
-            ${r.loteDivergente ? `<span class="tag-alerta">⚠ Lote divergente do Bling</span>` : ""}
-            <span class="status status--${r.status}">${r.status}</span>
-          </span>
-        </div>
-        ${
-          r.fotoUrl || r.loteFotoUrl
-            ? `<div class="registro__fotos">
-                ${
-                  r.fotoUrl
-                    ? `<button type="button" class="btn-link" data-ver-foto="${r.id}" data-tipo-foto="cupom">Ver cupom fiscal</button>`
-                    : ""
-                }
-                ${
-                  r.loteFotoUrl
-                    ? `<button type="button" class="btn-link" data-ver-foto="${r.id}" data-tipo-foto="lote">Ver foto do lote</button>`
-                    : ""
-                }
-              </div>`
-            : ""
-        }
-        ${
-          r.status === "pendente"
-            ? `<div class="registro__acoes"><button class="btn" data-confirmar="${r.id}">Confirmar baixa</button></div>`
-            : ""
-        }
-      </div>
-    `
-    )
-    .join("");
+  lista.innerHTML = vendas.map((v) => renderVendaCard(v)).join("");
 }
 
 function renderLogin(root, mensagemErro) {
@@ -188,7 +202,7 @@ function renderPainelAutorizado(root, user) {
   `;
 
   const painelErro = root.querySelector("#painel-erro");
-  let registrosAtuais = [];
+  let vendasAtuais = [];
 
   function mostrarErroPainel(texto) {
     if (!texto) {
@@ -200,16 +214,16 @@ function renderPainelAutorizado(root, user) {
     painelErro.textContent = texto;
   }
 
-  const q = query(collection(db, "baixas_estoque"), orderBy("criadoEm", "desc"));
+  const q = query(collection(db, "vendas_estoque"), orderBy("criadoEm", "desc"));
   unsubscribeSnapshot = onSnapshot(
     q,
     (snapshot) => {
-      registrosAtuais = snapshot.docs.map((d) => ({
+      vendasAtuais = snapshot.docs.map((d) => ({
         id: d.id,
         ...d.data({ serverTimestamps: "estimate" }),
       }));
       mostrarErroPainel(null);
-      renderLista(root, registrosAtuais);
+      renderLista(root, vendasAtuais);
     },
     () => {
       mostrarErroPainel(MENSAGEM_ERRO_LEITURA);
@@ -239,7 +253,7 @@ function renderPainelAutorizado(root, user) {
     const idConfirmar = e.target.dataset.confirmar;
     if (idConfirmar) {
       try {
-        await updateDoc(doc(db, "baixas_estoque", idConfirmar), {
+        await updateDoc(doc(db, "vendas_estoque", idConfirmar), {
           status: "confirmado",
           confirmadoPor: user.email,
           confirmadoEm: serverTimestamp(),
@@ -254,11 +268,19 @@ function renderPainelAutorizado(root, user) {
     const idFoto = e.target.dataset.verFoto;
     if (idFoto) {
       const tipo = e.target.dataset.tipoFoto;
-      const registro = registrosAtuais.find((r) => r.id === idFoto);
-      if (!registro) return;
-      const url = tipo === "lote" ? registro.loteFotoUrl : registro.fotoUrl;
-      if (!url) return;
-      abrirModalFoto(url, tipo === "lote" ? "Foto do lote" : "Foto do cupom fiscal");
+      const venda = vendasAtuais.find((v) => v.id === idFoto);
+      if (!venda) return;
+
+      if (tipo === "cupom") {
+        if (!venda.fotoCupomFiscal) return;
+        abrirModalFoto(venda.fotoCupomFiscal, "Foto do cupom fiscal");
+        return;
+      }
+
+      const indice = Number(e.target.dataset.indiceProduto);
+      const produto = (venda.produtos || [])[indice];
+      if (!produto || !produto.fotoLote) return;
+      abrirModalFoto(produto.fotoLote, `Foto do lote — ${produto.nome}`);
     }
   });
 }
