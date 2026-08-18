@@ -553,10 +553,13 @@ function renderFormularioVenda(root, user) {
         criadoEm: serverTimestamp(),
         status: "pendente",
       });
-    } catch {
+    } catch (err) {
+      // DIAGNÓSTICO TEMPORÁRIO — remover depois de confirmar a causa raiz.
+      console.error("Erro ao registrar venda:", err);
       salvando = false;
       atualizarBotaoConfirmar();
-      mostrarStatusUpload(formErro, MENSAGEM_ERRO_SALVAR, true);
+      const detalhe = err && err.code ? ` (${err.code})` : "";
+      mostrarStatusUpload(formErro, `${MENSAGEM_ERRO_SALVAR}${detalhe}`, true);
       return;
     }
 
