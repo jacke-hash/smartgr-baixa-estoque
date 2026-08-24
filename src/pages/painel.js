@@ -87,10 +87,31 @@ function normalizarVenda(id, dados) {
   };
 }
 
+const LIMITE_PRODUTOS_VISIVEIS = 2;
+
+function renderProdutoLinha(p) {
+  return `
+    <div class="registro__produto-linha">
+      <span class="registro__produto-nome">
+        ${p.nome}${p.codigoProduto ? ` <span class="registro__valor--discreto">(${p.codigoProduto})</span>` : ""}
+      </span>
+      <span class="registro__produto-lote">
+        ${
+          p.loteDivergente
+            ? `<span class="tag-alerta" title="Lote divergente do Bling">⚠ ${p.loteId || "manual"}</span>`
+            : p.loteId || "—"
+        }
+      </span>
+    </div>
+  `;
+}
+
 function renderVendaCard(venda) {
   const produtos = venda.produtos || [];
   const totalItens = produtos.length;
   const algumDivergente = produtos.some((p) => p.loteDivergente);
+  const produtosVisiveis = produtos.slice(0, LIMITE_PRODUTOS_VISIVEIS);
+  const restantes = totalItens - produtosVisiveis.length;
 
   return `
     <div class="registro" data-id="${venda.id}" data-origem="${venda.origem}">
@@ -103,24 +124,12 @@ function renderVendaCard(venda) {
         <span class="badge">${totalItens} ${totalItens === 1 ? "item" : "itens"}</span>
       </div>
       <div class="registro__produtos">
-        ${produtos
-          .map(
-            (p) => `
-              <div class="registro__produto-linha">
-                <span class="registro__produto-nome">
-                  ${p.nome}${p.codigoProduto ? ` <span class="registro__valor--discreto">(${p.codigoProduto})</span>` : ""}
-                </span>
-                <span class="registro__produto-lote">
-                  ${
-                    p.loteDivergente
-                      ? `<span class="tag-alerta" title="Lote divergente do Bling">⚠ ${p.loteId || "manual"}</span>`
-                      : p.loteId || "—"
-                  }
-                </span>
-              </div>
-            `
-          )
-          .join("")}
+        ${produtosVisiveis.map(renderProdutoLinha).join("")}
+        ${
+          restantes > 0
+            ? `<button type="button" class="btn-link" data-ver-produtos="${venda.id}">Ver mais ${restantes} ${restantes === 1 ? "item" : "itens"}</button>`
+            : ""
+        }
       </div>
       <div class="registro__linha">
         <span class="registro__label">Vendedor</span>
@@ -252,6 +261,13 @@ function renderPainelAutorizado(root, user) {
         <img id="foto-modal-img" alt="" />
       </div>
     </div>
+    <div class="modal-overlay" id="produtos-modal">
+      <div class="modal-content modal-content--card">
+        <button type="button" class="modal-close" id="produtos-modal-close" aria-label="Fechar">×</button>
+        <h2 class="modal-content__titulo">Itens da venda</h2>
+        <div class="registro__produtos registro__produtos--modal" id="produtos-modal-lista"></div>
+      </div>
+    </div>
   `;
 
   const painelErro = root.querySelector("#painel-erro");
@@ -325,7 +341,33 @@ function renderPainelAutorizado(root, user) {
     if (e.target === modal) fecharModalFoto();
   });
 
+  const modalProdutos = root.querySelector("#produtos-modal");
+  const modalProdutosLista = root.querySelector("#produtos-modal-lista");
+
+  function abrirModalProdutos(produtos) {
+    modalProdutosLista.innerHTML = produtos.map(renderProdutoLinha).join("");
+    modalProdutos.classList.add("show");
+  }
+
+  function fecharModalProdutos() {
+    modalProdutos.classList.remove("show");
+    modalProdutosLista.innerHTML = "";
+  }
+
+  root.querySelector("#produtos-modal-close").addEventListener("click", fecharModalProdutos);
+  modalProdutos.addEventListener("click", (e) => {
+    if (e.target === modalProdutos) fecharModalProdutos();
+  });
+
   root.querySelector("#lista").addEventListener("click", async (e) => {
+    const idVerProdutos = e.target.dataset.verProdutos;
+    if (idVerProdutos) {
+      const registro = registrosAtuais.find((r) => r.id === idVerProdutos);
+      if (!registro) return;
+      abrirModalProdutos(registro.produtos || []);
+      return;
+    }
+
     const idConfirmar = e.target.dataset.confirmar;
     if (idConfirmar) {
       const registro = registrosAtuais.find((r) => r.id === idConfirmar);

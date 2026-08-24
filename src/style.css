@@ -558,6 +558,27 @@ body {
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
 }
 
+.modal-content--card {
+  background: var(--color-surface);
+  border-radius: 12px;
+  padding: 24px;
+  width: 420px;
+  max-width: 90vw;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+
+.modal-content__titulo {
+  margin: 0 0 12px;
+  font-size: 1.05rem;
+}
+
+.registro__produtos--modal {
+  border: none;
+  padding: 0;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
 .modal-close {
   position: absolute;
   top: -14px;
