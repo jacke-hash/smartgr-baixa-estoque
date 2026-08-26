@@ -169,19 +169,31 @@ function renderVendaCard(venda) {
   `;
 }
 
-function renderLista(root, vendas) {
+function renderLista(root, vendas, abaAtiva) {
   const lista = root.querySelector("#lista");
   const contador = root.querySelector("#contador");
+  const btnPendentes = root.querySelector('[data-aba="pendente"]');
+  const btnBaixados = root.querySelector('[data-aba="baixado"]');
 
-  const pendentes = vendas.filter((v) => v.status === "pendente").length;
-  contador.textContent = `${pendentes} pendente${pendentes === 1 ? "" : "s"}`;
+  const pendentes = vendas.filter((v) => v.status === "pendente");
+  const baixados = vendas.filter((v) => v.status !== "pendente");
+  contador.textContent = `${pendentes.length} pendente${pendentes.length === 1 ? "" : "s"}`;
 
-  if (vendas.length === 0) {
-    lista.innerHTML = `<div class="empty-state">Nenhuma venda registrada ainda.</div>`;
+  if (btnPendentes) btnPendentes.textContent = `Pendentes (${pendentes.length})`;
+  if (btnBaixados) btnBaixados.textContent = `Baixados (${baixados.length})`;
+  if (btnPendentes) btnPendentes.classList.toggle("tab--ativa", abaAtiva === "pendente");
+  if (btnBaixados) btnBaixados.classList.toggle("tab--ativa", abaAtiva === "baixado");
+
+  const visiveis = abaAtiva === "pendente" ? pendentes : baixados;
+
+  if (visiveis.length === 0) {
+    lista.innerHTML = `<div class="empty-state">${
+      abaAtiva === "pendente" ? "Nenhuma baixa pendente." : "Nenhuma baixa confirmada ainda."
+    }</div>`;
     return;
   }
 
-  lista.innerHTML = vendas.map((v) => renderVendaCard(v)).join("");
+  lista.innerHTML = visiveis.map((v) => renderVendaCard(v)).join("");
 }
 
 function renderLogin(root, mensagemErro) {
@@ -252,6 +264,10 @@ function renderPainelAutorizado(root, user) {
           <span class="badge" id="contador">0 pendentes</span>
         </div>
         <p class="field-hint field-hint--erro" id="painel-erro" style="display: none;"></p>
+        <div class="tabs">
+          <button type="button" class="tab" data-aba="pendente">Pendentes (0)</button>
+          <button type="button" class="tab" data-aba="baixado">Baixados (0)</button>
+        </div>
         <div class="registro-list" id="lista"></div>
       </div>
     </div>
@@ -274,6 +290,7 @@ function renderPainelAutorizado(root, user) {
   let baixasAntigasAtuais = [];
   let vendasNovasAtuais = [];
   let registrosAtuais = [];
+  let abaAtiva = "pendente";
 
   function mostrarErroPainel(texto) {
     if (!texto) {
@@ -289,8 +306,15 @@ function renderPainelAutorizado(root, user) {
     registrosAtuais = [...baixasAntigasAtuais, ...vendasNovasAtuais].sort(
       (a, b) => criadoEmEmMilissegundos(b.criadoEm) - criadoEmEmMilissegundos(a.criadoEm)
     );
-    renderLista(root, registrosAtuais);
+    renderLista(root, registrosAtuais, abaAtiva);
   }
+
+  root.querySelector(".tabs").addEventListener("click", (e) => {
+    const aba = e.target.dataset.aba;
+    if (!aba) return;
+    abaAtiva = aba;
+    renderLista(root, registrosAtuais, abaAtiva);
+  });
 
   const qBaixasAntigas = query(collection(db, "baixas_estoque"), orderBy("criadoEm", "desc"));
   unsubscribeBaixasAntigas = onSnapshot(
