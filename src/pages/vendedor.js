@@ -11,18 +11,36 @@ const MENSAGEM_LOTE_NAO_CADASTRADO = "Nenhum lote cadastrado — lote divergente
 const MENSAGEM_ERRO_UPLOAD = "Não foi possível enviar a foto. Tente novamente.";
 const MENSAGEM_ERRO_SALVAR = "Não foi possível registrar a venda. Tente novamente.";
 const UNIDADES_RETIRADA = ["Zona Sul", "Zona Leste"];
+const RASCUNHO_KEY = "smartgr-baixa-estoque:rascunho-venda";
 
 async function uploadFoto(arquivo, tipo) {
+  const MAX_TENTATIVAS = 3;
   const formData = new FormData();
   formData.append("arquivo", arquivo);
   formData.append("tipo", tipo);
-  const res = await fetch(`${UPLOAD_BASE}/upload`, {
-    method: "POST",
-    body: formData,
-  });
-  const json = await res.json();
-  if (!res.ok || json.erro) throw new Error(json.erro || "Falha no upload");
-  return json.url;
+
+  let ultimoErro;
+  for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
+    try {
+      const res = await fetch(`${UPLOAD_BASE}/upload`, {
+        method: "POST",
+        body: formData,
+      });
+      const json = await res.json();
+      if (!res.ok || json.erro) {
+        const erro = new Error(json.erro || "Falha no upload");
+        erro.recuperavel = res.status >= 500;
+        throw erro;
+      }
+      return json.url;
+    } catch (err) {
+      ultimoErro = err;
+      const recuperavel = err.recuperavel !== false;
+      if (!recuperavel || tentativa === MAX_TENTATIVAS) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 800 * tentativa));
+    }
+  }
+  throw ultimoErro;
 }
 
 function debounce(fn, delay) {
@@ -174,6 +192,41 @@ function renderFormularioVenda(root, user) {
       !(fotoUpload.status === "success" && fotoUpload.url) ||
       uploadsEmAndamento ||
       salvando;
+
+    salvarRascunho();
+  }
+
+  function salvarRascunho() {
+    try {
+      const dados = {
+        unidade: unidadeInput.value,
+        fotoUpload:
+          fotoUpload.status === "success" && fotoUpload.url
+            ? { status: "success", url: fotoUpload.url }
+            : { status: "idle", url: null },
+        itens: itens.map((it) => ({
+          produtoNome: it.produtoInput.value,
+          produtoSelecionado: it.produtoSelecionado,
+          lote: obterLoteAtual(it),
+          loteDivergente: it.loteDivergente,
+          loteFotoUpload:
+            it.loteFotoUpload.status === "success" && it.loteFotoUpload.url
+              ? { status: "success", url: it.loteFotoUpload.url }
+              : { status: "idle", url: null },
+        })),
+      };
+      localStorage.setItem(RASCUNHO_KEY, JSON.stringify(dados));
+    } catch {
+      // localStorage indisponível — formulário simplesmente não persiste
+    }
+  }
+
+  function limparRascunho() {
+    try {
+      localStorage.removeItem(RASCUNHO_KEY);
+    } catch {
+      // ignora
+    }
   }
 
   unidadeInput.addEventListener("change", atualizarBotaoConfirmar);
@@ -213,7 +266,8 @@ function renderFormularioVenda(root, user) {
         state.status = "success";
         state.url = url;
         mostrarStatusUpload(statusEl, "", false);
-      } catch {
+      } catch (err) {
+        console.error("Erro ao enviar foto:", err);
         state.status = "error";
         state.url = null;
         mostrarStatusUpload(statusEl, MENSAGEM_ERRO_UPLOAD, true);
@@ -489,7 +543,85 @@ function renderFormularioVenda(root, user) {
     fotoUpload.url = null;
     mostrarStatusUpload(fotoStatus, "", false);
     mostrarStatusUpload(formErro, "", false);
+    limparRascunho();
     adicionarItem();
+  }
+
+  async function restaurarItem(dadosItem) {
+    adicionarItem();
+    const item = itens[itens.length - 1];
+
+    if (dadosItem.produtoSelecionado) {
+      item.produtoSelecionado = dadosItem.produtoSelecionado;
+      item.produtoInput.value = dadosItem.produtoSelecionado.nome;
+      await buscarLotesProduto(item, dadosItem.produtoSelecionado.id);
+
+      const select = item.loteArea.querySelector(".js-lote-select");
+      if (select) {
+        const opcaoExiste = Array.from(select.options).some((o) => o.value === dadosItem.lote);
+        if (opcaoExiste) {
+          select.value = dadosItem.lote;
+        } else if (dadosItem.loteDivergente) {
+          select.value = LOTE_OUTRO_VALUE;
+          select.dispatchEvent(new Event("change"));
+          const manual = item.loteArea.querySelector(".js-lote-manual");
+          if (manual) manual.value = dadosItem.lote;
+        }
+      } else {
+        const manual = item.loteArea.querySelector(".js-lote-manual");
+        if (manual) manual.value = dadosItem.lote;
+      }
+    } else if (dadosItem.produtoNome) {
+      item.produtoInput.value = dadosItem.produtoNome;
+    }
+
+    if (
+      dadosItem.loteDivergente &&
+      dadosItem.loteFotoUpload &&
+      dadosItem.loteFotoUpload.status === "success" &&
+      dadosItem.loteFotoUpload.url
+    ) {
+      item.loteFotoUpload.status = "success";
+      item.loteFotoUpload.url = dadosItem.loteFotoUpload.url;
+      item.fotoLotePreview.src = dadosItem.loteFotoUpload.url;
+      item.fotoLotePreview.style.display = "block";
+      item.fotoLoteLabel.textContent = "Foto enviada";
+      mostrarStatusUpload(item.fotoLoteStatus, "", false);
+    }
+
+    atualizarBotaoConfirmar();
+  }
+
+  async function restaurarOuIniciar() {
+    let rascunho = null;
+    try {
+      const raw = localStorage.getItem(RASCUNHO_KEY);
+      if (raw) rascunho = JSON.parse(raw);
+    } catch {
+      rascunho = null;
+    }
+
+    if (!rascunho || !Array.isArray(rascunho.itens) || rascunho.itens.length === 0) {
+      adicionarItem();
+      atualizarBotaoConfirmar();
+      return;
+    }
+
+    if (rascunho.unidade) unidadeInput.value = rascunho.unidade;
+
+    if (rascunho.fotoUpload && rascunho.fotoUpload.status === "success" && rascunho.fotoUpload.url) {
+      fotoUpload.status = "success";
+      fotoUpload.url = rascunho.fotoUpload.url;
+      fotoPreview.src = rascunho.fotoUpload.url;
+      fotoPreview.style.display = "block";
+      fotoLabel.textContent = "Foto enviada";
+    }
+
+    for (const dadosItem of rascunho.itens) {
+      await restaurarItem(dadosItem);
+    }
+
+    atualizarBotaoConfirmar();
   }
 
   form.addEventListener("submit", async (e) => {
@@ -571,6 +703,5 @@ function renderFormularioVenda(root, user) {
     setTimeout(() => toast.classList.remove("show"), 4000);
   });
 
-  adicionarItem();
-  atualizarBotaoConfirmar();
+  restaurarOuIniciar();
 }
