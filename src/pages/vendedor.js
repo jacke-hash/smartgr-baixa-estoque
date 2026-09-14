@@ -12,6 +12,15 @@ const MENSAGEM_ERRO_UPLOAD = "Não foi possível enviar a foto. Tente novamente.
 const MENSAGEM_ERRO_SALVAR = "Não foi possível registrar a venda. Tente novamente.";
 const UNIDADES_RETIRADA = ["Zona Sul", "Zona Leste"];
 const RASCUNHO_KEY = "smartgr-baixa-estoque:rascunho-venda";
+const TIMEOUT_UPLOAD_MS = 20000;
+const TIMEOUT_SALVAR_MS = 20000;
+
+function comTimeout(promise, ms, mensagem) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(mensagem)), ms)),
+  ]);
+}
 
 async function uploadFoto(arquivo, tipo) {
   const MAX_TENTATIVAS = 3;
@@ -21,10 +30,13 @@ async function uploadFoto(arquivo, tipo) {
 
   let ultimoErro;
   for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
+    const controlador = new AbortController();
+    const timeoutId = setTimeout(() => controlador.abort(), TIMEOUT_UPLOAD_MS);
     try {
       const res = await fetch(`${UPLOAD_BASE}/upload`, {
         method: "POST",
         body: formData,
+        signal: controlador.signal,
       });
       const json = await res.json();
       if (!res.ok || json.erro) {
@@ -38,6 +50,8 @@ async function uploadFoto(arquivo, tipo) {
       const recuperavel = err.recuperavel !== false;
       if (!recuperavel || tentativa === MAX_TENTATIVAS) throw err;
       await new Promise((resolve) => setTimeout(resolve, 800 * tentativa));
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
   throw ultimoErro;
@@ -675,22 +689,26 @@ function renderFormularioVenda(root, user) {
 
     try {
       const vendaRef = doc(collection(db, "vendas_estoque"));
-      await setDoc(vendaRef, {
-        vendaId: vendaRef.id,
-        unidade,
-        produtos: produtosPayload,
-        fotoCupomFiscal: fotoUpload.url,
-        vendedorNome: user.displayName || user.email,
-        vendedorEmail: user.email,
-        criadoEm: serverTimestamp(),
-        status: "pendente",
-      });
+      await comTimeout(
+        setDoc(vendaRef, {
+          vendaId: vendaRef.id,
+          unidade,
+          produtos: produtosPayload,
+          fotoCupomFiscal: fotoUpload.url,
+          vendedorNome: user.displayName || user.email,
+          vendedorEmail: user.email,
+          criadoEm: serverTimestamp(),
+          status: "pendente",
+        }),
+        TIMEOUT_SALVAR_MS,
+        "timeout"
+      );
     } catch (err) {
       // DIAGNÓSTICO TEMPORÁRIO — remover depois de confirmar a causa raiz.
       console.error("Erro ao registrar venda:", err);
       salvando = false;
       atualizarBotaoConfirmar();
-      const detalhe = err && err.code ? ` (${err.code})` : "";
+      const detalhe = err && err.code ? ` (${err.code})` : err && err.message === "timeout" ? " (timeout)" : "";
       mostrarStatusUpload(formErro, `${MENSAGEM_ERRO_SALVAR}${detalhe}`, true);
       return;
     }
