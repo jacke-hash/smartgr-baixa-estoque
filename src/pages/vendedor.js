@@ -14,12 +14,19 @@ const UNIDADES_RETIRADA = ["Zona Sul", "Zona Leste"];
 const RASCUNHO_KEY = "smartgr-baixa-estoque:rascunho-venda";
 const TIMEOUT_UPLOAD_MS = 20000;
 const TIMEOUT_SALVAR_MS = 20000;
+const TIMEOUT_API_MS = 15000;
 
 function comTimeout(promise, ms, mensagem) {
   return Promise.race([
     promise,
     new Promise((_, reject) => setTimeout(() => reject(new Error(mensagem)), ms)),
   ]);
+}
+
+function fetchComTimeout(url, ms) {
+  const controlador = new AbortController();
+  const timeoutId = setTimeout(() => controlador.abort(), ms);
+  return fetch(url, { signal: controlador.signal }).finally(() => clearTimeout(timeoutId));
 }
 
 async function uploadFoto(arquivo, tipo) {
@@ -379,8 +386,9 @@ function renderFormularioVenda(root, user) {
 
   async function buscarProdutos(item, busca) {
     try {
-      const res = await fetch(
-        `${API_BASE}/produtos?busca=${encodeURIComponent(busca)}`
+      const res = await fetchComTimeout(
+        `${API_BASE}/produtos?busca=${encodeURIComponent(busca)}`,
+        TIMEOUT_API_MS
       );
       const json = await res.json();
       if (!res.ok || json.erro) throw new Error(json.erro || "Falha na busca");
@@ -399,7 +407,7 @@ function renderFormularioVenda(root, user) {
     atualizarBotaoConfirmar();
 
     try {
-      const res = await fetch(`${API_BASE}/lotes?idProduto=${idProduto}`);
+      const res = await fetchComTimeout(`${API_BASE}/lotes?idProduto=${idProduto}`, TIMEOUT_API_MS);
       const json = await res.json();
       if (!res.ok || json.erro) throw new Error(json.erro || "Falha na busca");
       const lotes = json.data || [];
