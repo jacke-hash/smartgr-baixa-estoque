@@ -64,6 +64,25 @@ async function uploadFoto(arquivo, tipo) {
   throw ultimoErro;
 }
 
+// Fotos de celular (5-12MB) estouram timeout em rede ruim; reduz antes de enviar.
+async function comprimirImagem(arquivo, ladoMax = 1600, qualidade = 0.8) {
+  if (!arquivo.type.startsWith("image/") || arquivo.size < 400 * 1024) return arquivo;
+  try {
+    const bitmap = await createImageBitmap(arquivo);
+    const escala = Math.min(1, ladoMax / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * escala);
+    canvas.height = Math.round(bitmap.height * escala);
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    if (bitmap.close) bitmap.close();
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", qualidade));
+    if (!blob || blob.size >= arquivo.size) return arquivo;
+    return new File([blob], arquivo.name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
+  } catch {
+    return arquivo;
+  }
+}
+
 function debounce(fn, delay) {
   let timer;
   return (...args) => {
@@ -132,7 +151,7 @@ function renderFormularioVenda(root, user) {
         </div>
         <h1>Registrar venda</h1>
         <p class="subtitle">Preencha os dados para dar baixa no estoque.</p>
-        <form id="form-venda">
+        <form id="form-venda" novalidate>
           <div class="field">
             <label for="unidade-retirada">Unidade de retirada</label>
             <select id="unidade-retirada" required>
@@ -148,7 +167,7 @@ function renderFormularioVenda(root, user) {
           <div class="field">
             <label for="foto">Foto do cupom fiscal</label>
             <label class="field-file" id="drop-foto">
-              <input type="file" id="foto" accept="image/*" required />
+              <input type="file" id="foto" accept="image/*" />
               <span class="field-file__label" id="foto-label">Toque para anexar a foto</span>
               <img class="field-file__preview" id="foto-preview" alt="Pré-visualização do cupom" />
             </label>
@@ -178,6 +197,8 @@ function renderFormularioVenda(root, user) {
   // status: "idle" | "uploading" | "success" | "error"
   const fotoUpload = { status: "idle", url: null };
   let salvando = false;
+  // reaproveita o mesmo doc em retentativas: write que deu timeout ainda pode subir depois
+  let vendaRefPendente = null;
   let itemUidSeq = 0;
   // cada item: { uid, card, produtoInput, produtoSugestoes, produtoErro, loteArea,
   //   fotoLoteField, fotoLoteHint, fotoLoteInput, fotoLoteLabel, fotoLotePreview,
@@ -265,17 +286,22 @@ function renderFormularioVenda(root, user) {
   }
 
   function setupPreviewEUpload(input, label, preview, statusEl, tipo, state) {
+    let seq = 0;
+    let previewUrl = null;
     input.addEventListener("change", async () => {
       const file = input.files[0];
       if (!file) return;
 
+      const meuSeq = ++seq;
       label.textContent = file.name;
-      const reader = new FileReader();
-      reader.onload = () => {
-        preview.src = reader.result;
+      try {
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        previewUrl = URL.createObjectURL(file);
+        preview.src = previewUrl;
         preview.style.display = "block";
-      };
-      reader.readAsDataURL(file);
+      } catch {
+        // preview é opcional
+      }
 
       state.status = "uploading";
       state.url = null;
@@ -283,11 +309,14 @@ function renderFormularioVenda(root, user) {
       atualizarBotaoConfirmar();
 
       try {
-        const url = await uploadFoto(file, tipo);
+        const reduzida = await comprimirImagem(file);
+        const url = await uploadFoto(reduzida, tipo);
+        if (meuSeq !== seq) return; // usuário trocou a foto durante o envio
         state.status = "success";
         state.url = url;
         mostrarStatusUpload(statusEl, "", false);
       } catch (err) {
+        if (meuSeq !== seq) return;
         console.error("Erro ao enviar foto:", err);
         state.status = "error";
         state.url = null;
@@ -300,7 +329,6 @@ function renderFormularioVenda(root, user) {
   setupPreviewEUpload(fotoInput, fotoLabel, fotoPreview, fotoStatus, "cupom", fotoUpload);
 
   function atualizarObrigatoriedadeFotoLote(item) {
-    item.fotoLoteInput.required = item.loteDivergente;
     item.fotoLoteField.style.display = item.loteDivergente ? "block" : "none";
     item.fotoLoteHint.textContent = item.loteDivergente ? "(obrigatório)" : "";
   }
@@ -649,11 +677,21 @@ function renderFormularioVenda(root, user) {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
 
-    const unidade = unidadeInput.value;
-    if (!unidade) return;
+    if (salvando) return;
+    mostrarStatusUpload(formErro, "", false);
 
+    const unidade = unidadeInput.value;
+    if (!unidade) {
+      mostrarStatusUpload(formErro, "Selecione a unidade de retirada.", true);
+      return;
+    }
+
+    if (fotoUpload.status === "uploading") {
+      mostrarStatusUpload(formErro, "Aguarde o envio da foto terminar.", true);
+      return;
+    }
     if (fotoUpload.status !== "success" || !fotoUpload.url) {
-      mostrarStatusUpload(fotoStatus, MENSAGEM_ERRO_UPLOAD, true);
+      mostrarStatusUpload(formErro, "Anexe a foto do cupom fiscal.", true);
       return;
     }
 
@@ -669,9 +707,16 @@ function renderFormularioVenda(root, user) {
           ? loteSelect.value
           : "";
 
-      if (!nome || !lote) return;
+      if (!nome || !lote) {
+        mostrarStatusUpload(formErro, "Preencha produto e lote de todos os itens.", true);
+        return;
+      }
+      if (item.loteFotoUpload.status === "uploading") {
+        mostrarStatusUpload(formErro, "Aguarde o envio da foto do lote terminar.", true);
+        return;
+      }
       if (item.loteDivergente && (item.loteFotoUpload.status !== "success" || !item.loteFotoUpload.url)) {
-        mostrarStatusUpload(item.fotoLoteStatus, MENSAGEM_ERRO_UPLOAD, true);
+        mostrarStatusUpload(formErro, "Anexe a foto do lote.", true);
         return;
       }
 
@@ -689,14 +734,18 @@ function renderFormularioVenda(root, user) {
       produtosPayload.push(produtoPayload);
     }
 
-    if (produtosPayload.length === 0) return;
+    if (produtosPayload.length === 0) {
+      mostrarStatusUpload(formErro, "Adicione ao menos um produto.", true);
+      return;
+    }
 
     salvando = true;
     mostrarStatusUpload(formErro, "", false);
     atualizarBotaoConfirmar();
 
     try {
-      const vendaRef = doc(collection(db, "vendas_estoque"));
+      if (!vendaRefPendente) vendaRefPendente = doc(collection(db, "vendas_estoque"));
+      const vendaRef = vendaRefPendente;
       await comTimeout(
         setDoc(vendaRef, {
           vendaId: vendaRef.id,
@@ -722,6 +771,7 @@ function renderFormularioVenda(root, user) {
     }
 
     salvando = false;
+    vendaRefPendente = null;
     toast.classList.add("show");
     resetarFormulario();
     atualizarBotaoConfirmar();
