@@ -283,6 +283,9 @@ function renderFormularioVenda(root, user) {
     statusEl.style.display = "block";
     statusEl.textContent = texto;
     statusEl.classList.toggle("field-hint--erro", !!ehErro);
+    if (ehErro && statusEl.scrollIntoView) {
+      statusEl.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
   }
 
   function setupPreviewEUpload(input, label, preview, statusEl, tipo, state) {
@@ -334,7 +337,7 @@ function renderFormularioVenda(root, user) {
   }
 
   function alertaLoteDivergenteHTML(mensagem) {
-    return `<p class="field-hint field-hint--erro"><span aria-hidden="true">⚠</span> ${mensagem}</p>`;
+    return `<p class="field-hint field-hint--aviso"><span aria-hidden="true">⚠</span> ${mensagem}</p>`;
   }
 
   function renderDropdownLote(item, lotes) {

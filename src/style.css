@@ -305,6 +305,10 @@ body {
   cursor: not-allowed;
 }
 
+.field-hint--aviso {
+  color: #8a5a00;
+}
+
 .field-hint--erro {
   color: #a0324a;
 }
